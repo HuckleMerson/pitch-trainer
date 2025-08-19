@@ -1,0 +1,7 @@
+aiohttp
+ultralytics
+websockets
+httpx
+transformers
+orjson
+torch

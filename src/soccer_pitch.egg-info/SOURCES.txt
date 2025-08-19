@@ -1,0 +1,10 @@
+pyproject.toml
+setup.cfg
+src/soccer_pitch/__init__.py
+src/soccer_pitch/config.py
+src/soccer_pitch.egg-info/PKG-INFO
+src/soccer_pitch.egg-info/SOURCES.txt
+src/soccer_pitch.egg-info/dependency_links.txt
+src/soccer_pitch.egg-info/not-zip-safe
+src/soccer_pitch.egg-info/requires.txt
+src/soccer_pitch.egg-info/top_level.txt

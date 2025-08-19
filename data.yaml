@@ -1,0 +1,20 @@
+train: calib_dataset/train/images
+val: calib_dataset/valid/images
+test: calib_dataset/test/images
+
+
+nc: 1  # number of object categories (e.g., 1 for "field")
+
+names:
+  0: field  # or any name you assign to the object
+
+kpt_shape: [32, 3]  # 32 keypoints, each with x, y, visibility
+
+flip_idx: [
+  24, 25, 26, 27, 28, 29,
+  22, 23, 21, 17, 18, 19, 20,
+  13, 14, 15, 16,
+  9, 10, 11, 12, 8, 6, 7,
+  0, 1, 2, 3, 4, 5,
+  31, 30
+]

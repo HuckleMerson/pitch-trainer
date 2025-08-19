@@ -1,0 +1,3 @@
+SoccerNet
+opencv-python
+ultralytics
