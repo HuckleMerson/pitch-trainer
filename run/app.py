@@ -1,12 +1,16 @@
 import asyncio
+import websockets
 import multiprocessing
 from multiprocessing import Queue, shared_memory
 import time
 from tqdm import tqdm
 import threading
 import random
+import zlib
+import orjson
 
 from concurrent.futures import ThreadPoolExecutor
+import time
 
 from soccer.utils import (
     download_video,
@@ -320,76 +324,89 @@ class VideoProcessingClientServer:
 
 processing_server = VideoProcessingClientServer()
 
+async def client_ws_handler(websocket):
+    async def get_task_res(message):
+        try:
+            data = orjson.loads(message)
 
-async def get_task_res(data):
-    try:
+            if data.get("type") != "challenge":
+                return {"error": "Invalid message type"}
 
-        if data.get("type") != "challenge":
-            return {"error": "Invalid message type"}
+            challenge_id = data["challenge_id"]
+            video_url = data["video_url"]
+            client_id = data["client_id"]
+            client_count = data["client_count"]
 
-        challenge_id = data["challenge_id"]
-        video_url = data["video_url"]
-        client_id = data["client_id"]
-        client_count = data["client_count"]
+            print(f"[WS] Received task: {challenge_id} from server")
+            start_time = time.time()
 
-        print(f"[WS] Received task: {challenge_id} from server")
-        start_time = time.time()
+            start_idx, end_idx = get_range(750, client_count, client_id)
 
-        start_idx, end_idx = get_range(750, client_count, client_id)
-
-        processing_server.new_task_arrived(
-            video_url, challenge_id, client_id, client_count, start_idx, end_idx
-        )
-        print(f"First step done in {time.time() - start_time}s")
-        s2 = time.time()
-
-        # s2 = 0
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            future_obj = executor.submit(
-                processing_server.get_obj_output,
-                challenge_id,
-                s2,
+            processing_server.new_task_arrived(
+                video_url, challenge_id, client_id, client_count, start_idx, end_idx
             )
-            future_kp = executor.submit(processing_server.get_key_output, s2)
+            print(f"First step done in {time.time() - start_time}s")
+            s2 = time.time()
 
-            recog_objects = future_obj.result()
-            keypoints = future_kp.result()
-        print(f"Second step done in {time.time() - s2}s")
+            # s2 = 0
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                future_obj = executor.submit(
+                    processing_server.get_obj_output,
+                    challenge_id,
+                    s2,
+                )
+                future_kp = executor.submit(processing_server.get_key_output, s2)
 
-        frame_objects = [[] for _ in range(750)]
-        frame_keypoints = [[] for _ in range(750)]
+                recog_objects = future_obj.result()
+                keypoints = future_kp.result()
+            print(f"Second step done in {time.time() - s2}s")
 
-        recog_objects.sort(key=lambda x: x["fii"])
+            frame_objects = [[] for _ in range(750)]
+            frame_keypoints = [[] for _ in range(750)]
 
-        for obj in recog_objects:
-            del obj["fii"]
-            fid = obj.pop("frame_id")
-            frame_objects[fid].append(obj)
+            recog_objects.sort(key=lambda x: x["fii"])
 
-        for fid, points in keypoints:
-            frame_keypoints[fid] = points.tolist()
+            for obj in recog_objects:
+                del obj["fii"]
+                fid = obj.pop("frame_id")
+                frame_objects[fid].append(obj)
 
-        result = [
-            {
-                "frame_number": i,
-                "objects": frame_objects[i],
-                "keypoints": frame_keypoints[i],
-            }
-            for i in range(start_idx, end_idx)
-        ]
+            for fid, points in keypoints:
+                frame_keypoints[fid] = points.tolist()
 
-        result.sort(key=lambda r: len(r["objects"]))
-        remove_count = int(len(result) * 0.15)
-        for i in range(len(result)):
-            if i < remove_count or len(result[i]["objects"]) < 2:
-                result[i].pop("objects", None)
+            result = [
+                {
+                    "frame_number": i,
+                    "objects": frame_objects[i],
+                    "keypoints": frame_keypoints[i],
+                }
+                for i in range(start_idx, end_idx)
+            ]
 
-        print(f"[Global 🚩] All done in {time.time() - start_time}s")
-        return {"frames": result}
+            result.sort(key=lambda r: len(r["objects"]))
+            remove_count = int(len(result) * 0.15)
+            for i in range(len(result)):
+                if i < remove_count or len(result[i]["objects"]) < 2:
+                    result[i].pop("objects", None)
 
-    except Exception as e:
-        print(e)
-        return {"frames": str(e)}
+            print(f"[Global 🚩] All done in {time.time() - start_time}s")
+            return {"frames": result}
+
+        except Exception as e:
+            print(e)
+            return {"frames": str(e)}
+
+    try:
+        async for message in websocket:
+            result = await get_task_res(message)
+            payload = zlib.compress(orjson.dumps(result))
+
+            await websocket.send(payload)
+
+    except websockets.exceptions.ConnectionClosed:
+        print("[WS] Connection closed by server")
+
+
 
 
 async def main():
@@ -397,33 +414,15 @@ async def main():
     processing_server.start_processing_pools()
 
     print("[WS] Starting WebSocket server on ws://0.0.0.0:8765")
-    video_url = "https://scoredata.me/chunks/0cc3a803761942a4bde65e9b814604.mp4"
-    challenge_id = 1
-    for _ in range(0, 1):
-        res = await get_task_res(
-            {
-                "type": "challenge",
-                "challenge_id": challenge_id,
-                "client_id": random.randint(0, 0),
-                "client_count": 1,
-                "video_url": video_url,
-            }
-        )
-        time.sleep(1)
-    with open("/workspace/quantum/result.json", "w") as f:
-        json.dump(
-            {
-                "challenge": {
-                    "challenge_id": challenge_id,
-                    "created_at": 0,
-                    "video_url": video_url,
-                },
-                "content": {"challenge_id": challenge_id, "frames": res["frames"]},
-            },
-            f,
-        )
-        f.close()
-
+    async with websockets.serve(
+        client_ws_handler,
+        "0.0.0.0",
+        8765,
+        ping_interval=30,
+        ping_timeout=10,
+        max_size=10 * 1024 * 1024,
+    ):
+        await asyncio.Future()  # Run forever
 
 if __name__ == "__main__":
     asyncio.run(main())

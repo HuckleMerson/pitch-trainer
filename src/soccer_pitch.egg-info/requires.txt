@@ -2,6 +2,7 @@ numpy<2.3.0
 opencv-python-headless>=4.8
 tqdm>=4.0
 httpx
+transformers
 
 [all]
 ultralytics
